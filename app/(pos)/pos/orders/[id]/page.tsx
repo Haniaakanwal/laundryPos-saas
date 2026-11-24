@@ -1,0 +1,338 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import { useStore } from "@/lib/store";
+import { usePos } from "@/lib/pos-store";
+import { money } from "@/lib/format";
+import { STATUS_FLOW, PAYMENT_TYPES, PaymentType ,paymentMethodsFor, MESSAGE_TEMPLATES } from "@/lib/pos";
+import { Card, Button, Badge, Modal, Field, inputCls } from "@/components/ui";
+import { OrderStatusBadge } from "@/components/pos/bits";
+import { ArrowLeft, Printer, Truck, CheckCircle2, Ban, MoreVertical, Wallet, MessageSquare, Send } from "lucide-react";
+
+export default function OrderDetail() {
+  const params = useParams();
+  const id = params.id as string;
+  const { tenants } = useStore();
+  const pos = usePos();
+  const [payOpen, setPayOpen] = useState(false);
+  const [pt, setPt] = useState<PaymentType>("Cash");
+  const [amt, setAmt] = useState(0);
+const [menu, setMenu] = useState(false);
+  const [toast, setToast] = useState("");
+  const [smsOpen, setSmsOpen] = useState(false);
+  const [smsTemplate, setSmsTemplate] = useState(MESSAGE_TEMPLATES[0].id);
+  const [smsText, setSmsText] = useState(MESSAGE_TEMPLATES[0].body);
+  const [smsSending, setSmsSending] = useState(false);
+  function flash(m: string) { setToast(m); setTimeout(() => setToast(""), 2600); }
+
+  const o = pos.orderById(id);
+  const [lookupDone, setLookupDone] = useState(false);
+
+  // Don't wait on the full (potentially 10k-row) tenant order list just to open
+  // one order — fetch this one directly. If the bulk list finishes loading
+  // first (normal case, navigating from the Orders page) this is a no-op
+  // since `o` is already found above.
+  useEffect(() => {
+    if (o) { setLookupDone(true); return; }
+    let cancelled = false;
+    pos.fetchOrder(id).finally(() => { if (!cancelled) setLookupDone(true); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, !!o]);
+
+  const t = tenants.find((x) => x.id === o?.clientId);
+  const customer = pos.customers.find((c) => c.id === o?.customerId);
+
+  if (!o) {
+    if (!lookupDone) {
+      return <div className="animate-pulse text-sm text-slate-400">Loading order…</div>;
+    }
+    return <div><Link href="/pos/orders" className="text-sm text-brand-600">← Orders</Link><p className="mt-4 text-sm text-slate-500">Order not found.</p></div>;
+  }
+  if (!t) return <div><Link href="/pos/orders" className="text-sm text-brand-600">← Orders</Link><p className="mt-4 text-sm text-slate-500">Order not found.</p></div>;
+  const cur = t.currency;
+  const flow = STATUS_FLOW[o.status];
+
+  return (
+    <>
+   <Link href="/pos/orders" className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700 print:hidden"><ArrowLeft className="h-4 w-4" /> Orders</Link>
+<style>{`
+        @media print {
+          @page { size: 80mm auto; margin: 3mm; }
+        }
+      `}</style>
+
+      <div className="hidden print:block print:font-mono print:text-[10px] print:leading-snug print:text-black" style={{ width: "74mm", margin: "0 auto" }}>
+       <div className="flex items-start justify-between">
+          <div className="text-base font-bold uppercase leading-tight">{t.name}</div>
+          {t.logoUrl && <img src={t.logoUrl} alt={t.name} className="h-14 w-14 object-contain" />}
+        </div>
+        {t.phone && <div>Tel: {t.phone}</div>}
+        {t.address && <div className="whitespace-pre-line">{t.address}</div>}
+        {t.trn && <div>TRN: {t.trn}</div>}
+
+        <div className="my-1 border-t border-dashed border-black" />
+        <div className="text-center text-xs font-bold">JOB ORDER</div>
+        <div className="my-1 border-t border-dashed border-black" />
+
+        <div className="flex justify-between"><span>Order #</span><span>{o.reference}</span></div>
+        <div className="flex justify-between"><span>Customer</span><span>{o.customerName}</span></div>
+        <div className="flex justify-between"><span>Phone</span><span>{o.customerPhone}</span></div>
+        {customer?.address && <div className="flex justify-between gap-2"><span>Address</span><span className="text-right">{customer.address}</span></div>}
+       <div className="flex justify-between"><span>Order Date</span><span>{o.date}{o.orderTime ? ` ${o.orderTime}` : ""}</span></div>
+        <div className="flex justify-between"><span>Deliv. Date</span><span>{o.deliveryDate}{o.pickupTime ? ` ${o.pickupTime}` : ""}</span></div>
+
+        <div className="my-2 border-t border-dashed border-black" />
+
+        <div className="flex justify-between font-semibold">
+          <span className="w-2/5">Product</span><span className="w-[12%] text-right">Qty</span><span className="w-[16%] text-right">Amt</span><span className="w-[16%] text-right">Vat</span><span className="w-[16%] text-right">Total</span>
+        </div>
+        {o.items.map((it) => {
+          const rate = (o as any).taxRate ?? 0;
+          const itemVat = Math.round(it.lineTotal * (rate / 100) * 100) / 100;
+          const itemTotal = Math.round((it.lineTotal + itemVat) * 100) / 100;
+          return (
+            <div key={it.id} className="flex justify-between">
+              <span className="w-2/5 truncate">{it.serviceName}</span>
+              <span className="w-[12%] text-right">{it.qty}</span>
+              <span className="w-[16%] text-right">{money(it.lineTotal, cur)}</span>
+              <span className="w-[16%] text-right">{money(itemVat, cur)}</span>
+              <span className="w-[16%] text-right">{money(itemTotal, cur)}</span>
+            </div>
+          );
+        })}
+
+        <div className="my-2 border-t border-dashed border-black" />
+
+        <div className="flex justify-between"><span>Paid</span><span>{money(o.paid, cur)}</span></div>
+        <div className="flex justify-between"><span>Qty</span><span>{o.items.reduce((s, it) => s + it.qty, 0)}</span></div>
+        <div className="flex justify-between"><span>Sub Total</span><span>{money(o.sub, cur)}</span></div>
+        <div className="flex justify-between"><span>Balance</span><span>{money(o.balance, cur)}</span></div>
+        {((o as any).taxRate) > 0 && <div className="flex justify-between"><span>VAT {(o as any).taxRate}%</span><span>{money((o as any).tax, cur)}</span></div>}
+        {o.discount > 0 && <div className="flex justify-between"><span>Discount</span><span>-{money(o.discount, cur)}</span></div>}
+        {customer && <div className="flex justify-between"><span>Wallet</span><span>{money(customer.creditBalance, cur)}</span></div>}
+
+        <div className="my-1 border-t border-dashed border-black" />
+        <div className="flex justify-between text-sm font-bold"><span>TOTAL</span><span>{money(o.total, cur)}</span></div>
+        <div className="my-2 border-t border-dashed border-black" />
+
+        {customer && (
+          <div className="flex justify-between font-semibold"><span>Total Outstanding</span><span>{money(pos.balanceFor(customer.id), cur)}</span></div>
+        )}
+
+        {t.receiptNote && <div className="mt-2 text-center text-[9px]">{t.receiptNote}</div>}
+        <div className="mt-1 text-center text-[8px] text-slate-600">Printed on: {new Date().toLocaleString()}</div>
+      </div>
+
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3 print:hidden">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="font-mono text-xl font-semibold text-slate-900">{o.reference}</h1>
+            <OrderStatusBadge status={o.status} />
+          </div>
+          <p className="mt-1 text-sm text-slate-500">{o.date} · {o.deliveryType} · ready by {o.deliveryDate}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> Ticket</Button>
+          {o.status !== "Delivered" && o.status !== "Cancelled" && (
+            <Button variant="secondary" onClick={() => pos.setOrderStatus(o.id, "Cancelled")}><Ban className="h-4 w-4" /> Cancel</Button>
+          )}
+          {flow.next && (
+            <Button onClick={() => pos.setOrderStatus(o.id, flow.next!)}>
+              {o.status === "Ready" ? <Truck className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} {flow.label}
+            </Button>
+          )}
+          {/* per-order quick actions */}
+          <div className="relative print:hidden">
+            <button onClick={() => setMenu((v) => !v)} onBlur={() => setTimeout(() => setMenu(false), 150)} className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 ring-1 ring-inset ring-slate-300 hover:bg-slate-50">
+              <MoreVertical className="h-5 w-5" />
+            </button>
+            {menu && (
+              <div className="absolute right-0 top-11 z-30 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                <MenuItem icon={Wallet} label="Add payment" disabled={o.balance <= 0} onClick={() => { setMenu(false); setAmt(Math.round(o.balance)); setPayOpen(true); }} />
+                <MenuItem icon={Truck} label="Deliver order" disabled={o.status === "Delivered" || o.status === "Cancelled"} onClick={() => { setMenu(false); pos.setOrderStatus(o.id, "Delivered"); flash("Order marked delivered"); }} />
+                <MenuItem icon={Printer} label="Print order" onClick={() => { setMenu(false); window.print(); }} />
+             <MenuItem icon={MessageSquare} label="Custom SMS" onClick={() => { setMenu(false); setSmsOpen(true); }} />
+       <MenuItem icon={Send} label="Send order (WhatsApp)" onClick={async () => {
+  setMenu(false);
+  const balanceLine = o.balance > 0 ? ` Balance due: ${money(o.balance, cur)}.` : " Fully paid.";
+  const text = `Hi ${o.customerName}, your order ${o.reference} status: ${o.status}.${balanceLine}`;
+  const ok = await pos.sendWhatsApp(t.id, o.customerId, o.customerPhone, text, o.id);
+  flash(ok ? `Order ${o.reference} sent to ${o.customerPhone}` : "Failed to send WhatsApp message");
+}} />
+       <MenuItem icon={Send} label="Order complete (WhatsApp)" onClick={async () => {
+  setMenu(false);
+  const balanceLine = o.balance > 0 ? ` Remaining balance: ${money(o.balance, cur)}. Please settle at pickup.` : " Fully paid — thank you!";
+  const text = `Hi ${o.customerName}, your order ${o.reference} is ready! Total: ${money(o.total, cur)}.${balanceLine}`;
+  const ok = await pos.sendWhatsApp(t.id, o.customerId, o.customerPhone, text, o.id);
+  flash(ok ? `Order-complete message sent to ${o.customerPhone}` : "Failed to send WhatsApp message");
+}} />
+       <MenuItem icon={Send} label="Balance reminder (WhatsApp)" disabled={o.balance <= 0} onClick={async () => {
+  setMenu(false);
+  const text = `Hi ${o.customerName}, this is a reminder that order ${o.reference} has a remaining balance of ${money(o.balance, cur)} (Total: ${money(o.total, cur)}). Please settle at your earliest convenience.`;
+  const ok = await pos.sendWhatsApp(t.id, o.customerId, o.customerPhone, text, o.id);
+  flash(ok ? `Balance reminder sent to ${o.customerPhone}` : "Failed to send WhatsApp message");
+}} />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {toast && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20 print:hidden">
+          <CheckCircle2 className="h-4 w-4" /> {toast}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-6 print:hidden lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <Card className="overflow-hidden print:rounded-none print:border-slate-300 print:shadow-none">
+            <div className="border-b border-slate-100 px-5 py-3"><h2 className="text-sm font-semibold text-slate-900">Items</h2></div>
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-400"><th className="px-5 py-2">Item</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Qty</th><th className="px-3 py-2">Unit</th><th className="px-3 py-2">Total</th></tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {o.items.map((it) => (
+                  <tr key={it.id}>
+                    <td className="px-5 py-2.5"><div className="font-medium text-slate-800">{it.serviceName}</div><div className="text-xs text-slate-400">{it.hangFold}{it.nasha !== "None" ? ` · starch ${it.nasha}` : ""} · {it.placement}{it.urgent ? " · urgent" : ""}</div></td>
+                    <td className="px-3 py-2.5 text-slate-600">{it.serviceType}</td>
+                    <td className="px-3 py-2.5 text-slate-600">{it.qty}</td>
+                    <td className="px-3 py-2.5 text-slate-600">{money(it.unitPrice, cur)}</td>
+                    <td className="px-3 py-2.5 font-medium text-slate-900">{money(it.lineTotal, cur)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+
+          <Card className="overflow-hidden print:rounded-none print:border-slate-300 print:shadow-none">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
+              <h2 className="text-sm font-semibold text-slate-900">Payments</h2>
+              {o.balance > 0 && <Button size="sm" onClick={() => { setAmt(Math.round(o.balance)); setPayOpen(true); }}>Take payment</Button>}
+            </div>
+            {o.payments.length === 0 ? <p className="px-5 py-6 text-sm text-slate-400">No payments recorded.</p> : (
+              <ul className="divide-y divide-slate-100">
+                {o.payments.map((p) => (
+                  <li key={p.id} className="flex items-center justify-between px-5 py-2.5 text-sm">
+                    <span className="text-slate-600">{p.date} · <Badge tone="slate">{p.type}</Badge> <span className="text-xs text-slate-400">{p.ref}</span></span>
+                    <span className="font-medium text-slate-900">{money(p.amount, cur)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </div>
+
+        <div className="space-y-6">
+         <Card className="p-5 print:rounded-none print:border-slate-300 print:shadow-none">
+            <h2 className="mb-3 text-sm font-semibold text-slate-900">Customer</h2>
+            <div className="font-medium text-slate-900">{o.customerName}</div>
+            <div className="text-sm text-slate-500">{o.customerPhone}</div>
+            {o.notes && <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">{o.notes}</div>}
+          </Card>
+          <Card className="p-5 print:rounded-none print:border-slate-300 print:shadow-none">
+            <h2 className="mb-3 text-sm font-semibold text-slate-900">Totals</h2>
+            <dl className="space-y-2 text-sm">
+              <Row label="Subtotal" value={money(o.sub, cur)} />
+              <Row label="Discount" value={`- ${money(o.discount, cur)}`} />
+            
+            {((o as any).taxRate) > 0 && <Row label={`Tax (${(o as any).taxRate}%)`} value={money((o as any).tax, cur)} />}
+              <div className="flex justify-between border-t border-slate-100 pt-2 text-base font-semibold text-slate-900"><span>Total</span><span>{money(o.total, cur)}</span></div>
+              <Row label="Paid" value={money(o.paid, cur)} />
+              <div className="flex justify-between text-sm font-semibold"><span className="text-slate-500">Balance</span><span className={o.balance > 0 ? "text-amber-600" : "text-emerald-600"}>{money(o.balance, cur)}</span></div>
+            </dl>
+          </Card>
+        </div>
+      </div>
+
+
+      <Modal open={payOpen} onClose={() => setPayOpen(false)} title={`Take payment · ${o.reference}`}>
+        <div className="space-y-4">
+          <div className="rounded-lg bg-slate-50 px-4 py-3 text-sm"><span className="text-slate-500">Balance due </span><span className="font-semibold text-slate-900">{money(o.balance, cur)}</span></div>
+          {customer && customer.creditBalance > 0 && (
+            <div className="flex items-center justify-between rounded-lg bg-emerald-50 px-3 py-2 text-sm">
+              <span className="text-emerald-700">Available credit: {money(customer.creditBalance, cur)}</span>
+           <button
+                onClick={() => {
+                  setPt("Credit");
+                  setAmt(Math.min(customer.creditBalance, o.balance));
+                }}
+                className="text-xs font-medium text-emerald-700 hover:underline"
+              >
+                Apply credit
+              </button>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4">
+<Field label="Method"><select className={inputCls} value={pt} onChange={(e) => setPt(e.target.value as PaymentType)}>{paymentMethodsFor(t).map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Amount"><input type="number" className={inputCls} value={amt} onChange={(e) => setAmt(Math.max(0, parseFloat(e.target.value) || 0))} /></Field>
+          </div>
+          {amt > o.balance && (
+            <div className="text-sm text-emerald-600">Extra {money(Math.round((amt - o.balance) * 100) / 100, cur)} → saved as credit</div>
+          )}
+        </div>
+        <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
+          <Button variant="secondary" onClick={() => setPayOpen(false)}>Cancel</Button>
+          <Button disabled={amt <= 0} onClick={() => { pos.addOrderPayment(o.id, pt, amt); setPayOpen(false); }}>Record {money(amt, cur)}</Button>
+        </div>
+      </Modal>
+
+      {smsOpen && customer && (
+        <Modal open onClose={() => setSmsOpen(false)} title={`Send message · ${o.customerName}`}>
+          <div className="space-y-4">
+            <Field label="Template">
+              <select
+                className={inputCls}
+                value={smsTemplate}
+                onChange={(e) => {
+                  const tpl = MESSAGE_TEMPLATES.find((m) => m.id === e.target.value)!;
+                  setSmsTemplate(tpl.id);
+                  setSmsText(
+                    tpl.body
+                      .replace("{name}", o.customerName)
+                      .replace("{ref}", o.reference)
+                      .replace("{balance}", money(o.balance, cur))
+                  );
+                }}
+              >
+                {MESSAGE_TEMPLATES.map((tpl) => <option key={tpl.id} value={tpl.id}>{tpl.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Message">
+              <textarea className={inputCls} rows={4} value={smsText} onChange={(e) => setSmsText(e.target.value)} />
+            </Field>
+          </div>
+          <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
+            <Button variant="secondary" onClick={() => setSmsOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!smsText.trim() || smsSending}
+              onClick={async () => {
+                setSmsSending(true);
+                const ok = await pos.sendWhatsApp(t.id, customer.id, customer.phone, smsText, o.id);
+                setSmsSending(false);
+                setSmsOpen(false);
+                flash(ok ? `Message sent to ${o.customerName}` : "Failed to send message");
+              }}
+            >
+              {smsSending ? "Sending…" : "Send"}
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return <div className="flex justify-between"><dt className="text-slate-500">{label}</dt><dd className="text-slate-800">{value}</dd></div>;
+}
+
+function MenuItem({ icon: Icon, label, onClick, disabled }: { icon: any; label: string; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button onClick={onClick} disabled={disabled} className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white">
+      <Icon className="h-4 w-4 text-slate-400" /> {label}
+    </button>
+  );
+}

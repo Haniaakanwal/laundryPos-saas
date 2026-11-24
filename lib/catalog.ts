@@ -1,0 +1,194 @@
+import { FeatureModule, FeatureKey, Plan } from "./types";
+
+// ---------------------------------------------------------------------------
+// Feature module catalog — the "access surface" of the Laundry POS.
+// Each entry corresponds to a real functional area found in the FileMaker DDR.
+// Toggling these per-tenant is what "controlling client access" means.
+// ---------------------------------------------------------------------------
+export const FEATURES: FeatureModule[] = [
+  {
+    key: "pos",
+    name: "Point of Sale",
+    description: "Take-in counter: create orders, line items, hang/fold, urgent flags, print tickets.",
+    category: "Core",
+  },
+  {
+    key: "orders",
+    name: "Order Board",
+    description: "Live order tracking — active / ready / delivered, driver assignment, pickup times.",
+    category: "Core",
+  },
+  {
+    key: "customers",
+    name: "Customers",
+    description: "Individual customer records, balances, blacklist, order history.",
+    category: "Core",
+ 
+  },
+  {
+    key: "services",
+    name: "Services & Pricing",
+    description: "Service catalog, service types, and the price matrix (wash, iron, dry-clean…).",
+    category: "Core",
+   
+  },
+  {
+    key: "inventory",
+    name: "Inventory",
+    description: "Stock items, reorder levels, barcodes and costing.",
+    category: "Core",
+    
+  },
+  {
+    key: "payments",
+    name: "Payments",
+    description: "Cash / card / EFT / account capture, change, and reconciliation.",
+    category: "Finance",
+   
+  },
+  {
+    key: "reports",
+    name: "Reports & Dashboards",
+    description: "Daily takings, sales summaries and KPI dashboards.",
+    category: "Finance",
+  
+  },
+  {
+    key: "sms",
+    name: "SMS Campaigns",
+    description: "SMS templates and bulk 'order ready' / balance reminders.",
+    category: "Growth",
+  
+  },
+  {
+    key: "whatsapp",
+    name: "WhatsApp",
+    description: "WhatsApp Business messaging and delivery logs.",
+    category: "Growth",
+  
+  },
+  {
+    key: "promotions",
+    name: "Promotions",
+    description: "Promo campaigns and marketing broadcast files.",
+    category: "Growth",
+ 
+  },
+  {
+    key: "multibranch",
+    name: "Multi-Branch",
+    description: "Multiple locations with inter-branch item transfers and consolidated reporting.",
+    category: "Platform",
+  
+  },
+  {
+    key: "arabic",
+    name: "Arabic / RTL",
+    description: "Arabic service names, receipts and right-to-left interface.",
+    category: "Platform",
+  
+  },
+];
+
+export const FEATURE_MAP: Record<FeatureKey, FeatureModule> = Object.fromEntries(
+  FEATURES.map((f) => [f.key, f])
+) as Record<FeatureKey, FeatureModule>;
+
+// ---------------------------------------------------------------------------
+// Subscription plans. Each plan unlocks a set of feature modules; per-tenant
+// overrides can then grant/revoke individual modules on top.
+// ---------------------------------------------------------------------------
+export const PLANS: Plan[] = [
+  {
+    id: "starter",
+    name: "Starter",
+    priceMonthly: 49,
+    blurb: "Single-shop counter POS.",
+    seatLimit: 3,
+    branchLimit: 1,
+    storageLimitMB: 1024,
+    features: ["pos", "orders", "customers", "services", "inventory", "payments", "reports"],
+  },
+  {
+    id: "professional",
+    name: "Professional",
+    priceMonthly: 129,
+    blurb: "Growing laundries with accounts & marketing.",
+    seatLimit: 10,
+    branchLimit: 2,
+    storageLimitMB: 10240,
+    features: [
+      "pos",
+      "orders",
+      "customers",
+      "services",
+      "inventory",
+      "payments",
+      "reports",
+      "sms",
+      "promotions",
+      "arabic",
+    ],
+  },
+  {
+    id: "enterprise",
+    name: "Enterprise",
+    priceMonthly: 349,
+    blurb: "Multi-branch chains, full marketing suite.",
+    seatLimit: null,
+    branchLimit: null,
+    storageLimitMB: 102400,
+    features: [
+      "pos",
+      "orders",
+      "customers",
+      "services",
+      "inventory",
+      "payments",
+      "reports",
+      "sms",
+      "whatsapp",
+      "promotions",
+      "multibranch",
+      "arabic",
+    ],
+  },
+];
+
+
+export const PLAN_MAP: Record<string, Plan> = Object.fromEntries(PLANS.map((p) => [p.id, p]));
+
+// Look up a plan by id from a *live* plans list (falls back to the static
+// catalog if the tenant's store hasn't loaded yet).
+export function planById(plans: Plan[] | undefined, planId: string): Plan | undefined {
+  return plans?.find((p) => p.id === planId) ?? PLAN_MAP[planId];
+}
+
+// Resolve the *effective* access for a tenant: plan defaults + overrides.
+// `plans` should come from useStore() so admin edits to a plan take effect everywhere.
+export function effectiveFeatures(
+  plans: Plan[] | undefined,
+  planId: string,
+  overrides: Partial<Record<FeatureKey, boolean>>
+): Record<FeatureKey, boolean> {
+  const plan = planById(plans, planId);
+  const base = new Set(plan?.features ?? []);
+  const result = {} as Record<FeatureKey, boolean>;
+  for (const f of FEATURES) {
+    const inPlan = base.has(f.key);
+    const override = overrides[f.key];
+    result[f.key] = override === undefined ? inPlan : override;
+  }
+  return result;
+}
+
+export function isFeatureOn(
+  plans: Plan[] | undefined,
+  planId: string,
+  overrides: Partial<Record<FeatureKey, boolean>>,
+  key: FeatureKey
+): boolean {
+  const override = overrides[key];
+  if (override !== undefined) return override;
+  return (planById(plans, planId)?.features ?? []).includes(key);
+}

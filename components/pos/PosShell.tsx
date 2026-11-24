@@ -1,0 +1,306 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useStore } from "@/lib/store";
+import { usePos } from "@/lib/pos-store";
+import { useAuth } from "@/lib/auth-store";
+import { canAccess } from "@/lib/rbac";
+import { isFeatureOn } from "@/lib/catalog";
+import { FeatureKey } from "@/lib/types";
+import {
+  LayoutDashboard, PlusCircle, ClipboardList, Users, Building2, Shirt,
+  CreditCard, BarChart3, Receipt, Megaphone, LogOut, ArrowLeft, ChevronDown,
+  MoreVertical, History, FileText,Users2, Menu, ChevronLeft, ChevronRight, X, KeyRound
+} from "lucide-react";
+import { StatusBadge } from "@/components/ui";
+
+const NAV: { href: string; label: string; icon: any; feature?: FeatureKey | FeatureKey[] }[] = [
+  { href: "/pos", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/pos/new", label: "New Order", icon: PlusCircle, feature: "pos" },
+  { href: "/pos/orders", label: "Orders", icon: ClipboardList, feature: "orders" },
+  { href: "/pos/customers", label: "Customers", icon: Users, feature: "customers" },
+  { href: "/pos/services", label: "Services & Pricing", icon: Shirt, feature: "services" },
+  { href: "/pos/payments", label: "Payments", icon: CreditCard, feature: "payments" },
+  { href: "/pos/reports", label: "Reports", icon: BarChart3, feature: "reports" },
+  { href: "/pos/marketing", label: "Marketing", icon: Megaphone, feature: ["sms", "whatsapp", "promotions"] },
+  { href: "/pos/users", label: "Users", icon: Users2 },
+];
+
+export function PosShell({ children }: { children: React.ReactNode }) {
+const { tenants, plans, ready } = useStore();
+  const pos = usePos();
+  const { session, logout } = useAuth();
+  const pathname = usePathname();
+  const router = useRouter();
+
+ const isStaff = session?.role === "staff";
+const [navOpen, setNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("laundry-pos-sidebar-collapsed");
+    if (saved === "1") setCollapsed(true);
+  }, []);
+
+  function toggleCollapse() {
+    setCollapsed((c) => {
+      localStorage.setItem("laundry-pos-sidebar-collapsed", c ? "0" : "1");
+      return !c;
+    });
+  }
+
+  // Staff are locked to their own tenant — force the active client to match.
+  useEffect(() => {
+    if (isStaff && session && pos.ready && pos.activeClientId !== session.tenantId) {
+      pos.setActiveClient(session.tenantId);
+    }
+  }, [isStaff, session, pos.ready, pos.activeClientId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const tenant = tenants.find((t) => t.id === pos.activeClientId);
+
+  if (!ready || !pos.ready) return <div className="p-10 text-sm text-slate-400">Loading…</div>;
+
+if (!tenant) {
+  if (isStaff) {
+    // safety fallback: tenantId invalid, force logout instead of infinite loading
+    if (ready && pos.ready) { logout(); router.replace("/login"); }
+    return <div className="p-10 text-sm text-slate-400">Loading…</div>;
+  }
+  return <ClientPicker />;
+}
+
+  function signOut() {
+    logout();
+    router.replace("/login");
+  }
+
+  const enabled = (f?: FeatureKey | FeatureKey[]) => {
+    if (!f) return true;
+    const keys = Array.isArray(f) ? f : [f];
+    return keys.some((k) => isFeatureOn(plans, tenant.plan, tenant.featureOverrides, k));
+  };
+const role = session?.role === "staff" ? session.userRole : "Owner";
+
+const nav = NAV.filter((n) => enabled(n.feature) && canAccess(role, n.href));
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      {/* top bar */}
+    <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 print:hidden">
+        <div className="flex items-center gap-3">
+          <button onClick={() => setNavOpen(true)} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden">
+            <Menu className="h-5 w-5" />
+          </button>
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
+            {tenant.name.slice(0, 1)}
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-slate-900">{tenant.name}</div>
+            <div className="text-[11px] text-slate-400">{tenant.slug}.laundrypos.app · POS</div>
+          </div>
+          <span className="ml-2"><StatusBadge status={tenant.status} /></span>
+        </div>
+        <div className="flex items-center gap-2">
+          <ActionsMenu enabled={enabled} />
+          {!isStaff && <ClientSwitcher />}
+     <div className="hidden text-right sm:block">
+            {isStaff ? (
+              <button onClick={() => setPwOpen(true)} className="text-xs font-medium text-slate-700 hover:text-brand-600 hover:underline">{session?.name}</button>
+            ) : (
+              <div className="text-xs font-medium text-slate-700">{session?.name}</div>
+            )}
+            <div className="text-[11px] text-slate-400">{isStaff ? (session as any).userRole : "Platform admin"}</div>
+          </div>
+          {isStaff ? (
+            <button onClick={signOut} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100">
+              <LogOut className="h-4 w-4" /> Sign out
+            </button>
+          ) : (
+            <Link href="/clients" className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100">
+              <ArrowLeft className="h-4 w-4" /> Admin
+            </Link>
+          )}
+        </div>
+      </header>
+{navOpen && <div onClick={() => setNavOpen(false)} className="fixed inset-0 z-30 bg-black/40 lg:hidden" />}
+<aside
+        className={`fixed left-0 top-14 z-40 h-[calc(100vh-3.5rem)] w-56 -translate-x-full border-r border-slate-200 bg-white px-3 py-4 shadow-xl transition-all duration-200 print:hidden lg:translate-x-0 lg:shadow-none ${
+          navOpen ? "translate-x-0" : ""
+        } ${collapsed ? "lg:w-16 lg:px-2" : "lg:w-56"}`}
+      >
+      
+        <div className="mb-2 flex items-center justify-between lg:hidden">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Menu</span>
+          <button onClick={() => setNavOpen(false)} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <nav className="space-y-1">
+          {nav.map((item) => {
+            const active = pathname === item.href || (item.href !== "/pos" && pathname.startsWith(item.href));
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => setNavOpen(false)}
+                title={collapsed ? item.label : undefined}
+                className={`flex items-center gap-3 rounded-lg text-sm font-medium transition ${
+                  collapsed ? "lg:h-9 lg:w-9 lg:justify-center lg:gap-0 lg:px-0 lg:py-0 lg:mx-auto px-3 py-2" : "px-3 py-2"
+                } ${active ? "bg-brand-50 text-brand-700" : "text-slate-600 hover:bg-slate-100"}`}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className={collapsed ? "lg:hidden" : ""}>{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+   <div className={`mt-4 border-t border-slate-100 pt-4 ${collapsed ? "lg:px-0" : ""}`}>
+          {isStaff ? (
+            <button onClick={signOut} className={`flex items-center gap-3 rounded-lg text-sm font-medium text-slate-500 hover:bg-slate-100 ${collapsed ? "lg:h-10 lg:w-10 lg:justify-center lg:gap-0 lg:mx-auto lg:px-0  w-full px-3 py-2" : "w-full px-3 py-2"}`} title={collapsed ? "Sign out" : undefined}>
+              <LogOut className="h-4 w-4 shrink-0" /> <span className={collapsed ? "lg:hidden" : ""}>Sign out</span>
+            </button>
+          ) : (
+            <button onClick={() => { pos.setActiveClient(null); router.push("/clients"); }} className={`flex items-center gap-3 rounded-lg text-sm font-medium text-slate-500 hover:bg-slate-100 ${collapsed ? "lg:h-9 lg:w-9 lg:justify-center lg:gap-0 lg:mx-auto lg:px-0  w-full px-3 py-2" : "w-full px-3 py-2"}`} title={collapsed ? "Back to admin" : undefined}>
+              <LogOut className="h-4 w-4 shrink-0" /> <span className={collapsed ? "lg:hidden" : ""}>Back to admin</span>
+            </button>
+          )}
+        </div>
+        <button
+          onClick={toggleCollapse}
+          className="mt-4 hidden w-full items-center justify-center gap-2 border-t border-slate-100 pt-3 pb-1 text-xs font-medium text-slate-400 hover:text-slate-800 lg:flex"
+        >
+          {collapsed ? <ChevronRight className="h-4 w-4" /> : <><ChevronLeft className="h-4 w-4" /> </>}
+        </button>
+      </aside>
+<main className={`min-w-0 px-8 py-6 transition-all duration-200 ${collapsed ? "lg:pl-[88px]" : "lg:pl-64"}`}>{children}</main>
+
+      {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
+    </div>
+  );
+}
+
+function ChangePasswordModal({ onClose }: { onClose: () => void }) {
+  const { session } = useAuth();
+  const store = useStore();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+
+  function submit() {
+    setError("");
+    if (next.length < 6) { setError("New password must be at least 6 characters."); return; }
+    if (next !== confirm) { setError("Passwords do not match."); return; }
+    // find this staff member's user id
+    const me = store.users.find((u) => u.email?.toLowerCase() === session?.email?.toLowerCase());
+    if (!me) { setError("Could not find your account."); return; }
+    const res = store.changeStaffPassword(me.id, current, next);
+    if (!res.ok) { setError(res.error); return; }
+    setDone(true);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+        <h3 className="mb-1 text-sm font-semibold text-slate-900">Change password</h3>
+        {done ? (
+          <>
+            <p className="mt-3 text-sm text-emerald-600">Password updated successfully.</p>
+            <button onClick={onClose} className="mt-4 w-full rounded-lg bg-brand-600 py-2 text-sm font-medium text-white">Done</button>
+          </>
+        ) : (
+          <>
+            <p className="mb-4 text-xs text-slate-500">Update your account password below.</p>
+            <div className="space-y-3">
+              <input type="password" placeholder="Current password" value={current} onChange={(e) => setCurrent(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              <input type="password" placeholder="New password" value={next} onChange={(e) => setNext(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              <input type="password" placeholder="Confirm new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+            </div>
+            {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100">Cancel</button>
+              <button onClick={submit} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">Update</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ActionsMenu({ enabled }: { enabled: (f?: FeatureKey | FeatureKey[]) => boolean }) {
+  const [open, setOpen] = useState(false);
+  const items = [
+    { href: "/pos/new", label: "New Order", icon: PlusCircle, feature: "pos" as FeatureKey },
+    { href: "/pos/orders", label: "Order History", icon: History, feature: "orders" as FeatureKey },
+    { href: "/pos/counter-report", label: "Counter Report", icon: FileText, feature: "reports" as FeatureKey },
+  ].filter((i) => enabled(i.feature));
+
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen((v) => !v)} onBlur={() => setTimeout(() => setOpen(false), 150)} className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100">
+        <MoreVertical className="h-5 w-5" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-11 z-30 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+          {items.map((i) => {
+            const Icon = i.icon;
+            return (
+              <Link key={i.href} href={i.href} onClick={() => setOpen(false)} className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50">
+                <Icon className="h-4 w-4 text-slate-400" /> {i.label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClientSwitcher() {
+  const { tenants } = useStore();
+  const pos = usePos();
+  const live = tenants.filter((t) => t.status !== "churned");
+  return (
+    <div className="relative">
+      <select
+        value={pos.activeClientId ?? ""}
+        onChange={(e) => pos.setActiveClient(e.target.value)}
+        className="appearance-none rounded-lg border border-slate-300 bg-white py-1.5 pl-3 pr-8 text-sm font-medium text-slate-700 shadow-sm focus:border-brand-500 focus:outline-none"
+      >
+        {live.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+    </div>
+  );
+}
+
+function ClientPicker() {
+  const { tenants } = useStore();
+  const pos = usePos();
+  const router = useRouter();
+  const live = tenants.filter((t) => t.status !== "churned");
+  return (
+    <div className="mx-auto max-w-2xl px-6 py-16">
+      <h1 className="text-xl font-semibold text-slate-900">Open a client’s POS</h1>
+      <p className="mt-1 text-sm text-slate-500">Choose which laundry to sign in as. You can switch or return to the admin console at any time.</p>
+      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {live.map((t) => (
+          <button key={t.id} onClick={() => { pos.setActiveClient(t.id); router.push("/pos"); }} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand-300 hover:shadow">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-sm font-semibold text-brand-700">{t.name.slice(0, 2).toUpperCase()}</div>
+            <div className="min-w-0">
+              <div className="truncate font-medium text-slate-900">{t.name}</div>
+              <div className="text-xs text-slate-400">{t.country}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+      <Link href="/dashboard" className="mt-6 inline-flex items-center gap-1.5 text-sm text-brand-600 hover:underline"><ArrowLeft className="h-4 w-4" /> Back to admin console</Link>
+    </div>
+  );
+}
